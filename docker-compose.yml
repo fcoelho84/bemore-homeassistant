@@ -1,0 +1,37 @@
+services:
+  assistant:
+    image: "ghcr.io/home-assistant/home-assistant:stable"
+    volumes:
+      - ./config/data:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+
+  wyoming-whisper:
+    image: rhasspy/wyoming-whisper:latest
+    command: --model medium --language pt
+    volumes:
+      - ./wyoming-whisper/data:/data
+    ports:
+      - 10300:10300
+    restart: unless-stopped
+
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:latest
+    command: --voice pt_BR-faber-medium --length-scale 0.85 --noise-scale 0.3 --noise-w 0.3
+    volumes:
+      - ./wyoming-piper/data:/data
+    ports:
+      - 10200:10200
+    restart: unless-stopped
+
+  wyoming-wakeword:
+    image: rhasspy/wyoming-openwakeword:latest
+    command: --preload-model 'bmo' --custom-model-dir /custom
+    volumes:
+      - ./wyoming-wakeword/data:/data
+      - ./wyoming-wakeword/custom:/custom
+    ports:
+      - 10400:10400
+    restart: unless-stopped
