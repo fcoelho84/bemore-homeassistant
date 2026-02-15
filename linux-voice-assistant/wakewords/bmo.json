@@ -1,0 +1,5 @@
+{
+  "type": "openWakeWord",
+  "wake_word": "bmo",
+  "model": "bmo.tflite"
+}

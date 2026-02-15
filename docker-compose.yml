@@ -4,6 +4,7 @@ services:
     volumes:
       - ./config/data:/config
       - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
     restart: unless-stopped
     privileged: true
     network_mode: host
@@ -19,46 +20,41 @@ services:
 
   wyoming-piper:
     image: rhasspy/wyoming-piper:latest
-    command: --voice pt_BR-faber-medium --length-scale 0.85 --noise-scale 0.3 --noise-w 0.3
+    command: --voice en_US-bmo_voice --data-dir /data --length-scale 0.85 --noise-scale 0.3 --noise-w-scale 0.3
     volumes:
       - ./wyoming-piper/data:/data
     ports:
       - 10200:10200
     restart: unless-stopped
 
-  wyoming-wakeword:
-    image: rhasspy/wyoming-openwakeword:latest
-    command: --preload-model 'bmo' --custom-model-dir /custom --threshold 0.7 --trigger-level 2
-    volumes:
-      - ./wyoming-wakeword/data:/data
-      - ./wyoming-wakeword/custom:/custom
-    ports:
-      - 10400:10400
-    restart: unless-stopped
-
-  wyoming-satellite:
-    build: ./wyoming-satellite
-    command: >
-      --name satellite
-      --uri tcp://0.0.0.0:10500
-      --mic-command 'arecord -D plughw:0,7 -r 16000 -c 1 -f S16_LE -t raw'
-      --snd-command 'aplay -D pulse -r 22050 -c 1 -f S16_LE -t raw'
-      --wake-uri tcp://wyoming-wakeword:10400
-      --wake-word-name bmo
-      --awake-wav /sounds/awake.wav
-      --done-wav /sounds/done.wav
-      --debug
+  linux-voice-assistant:
+    image: ghcr.io/ohf-voice/linux-voice-assistant:latest
     environment:
+      - HA_HOST=127.0.0.1
+      - HA_PORT=8123
+      - HA_TOKEN=${HA_TOKEN}
+      - MICROPHONE_DEVICE=default
+      - SPEAKER_DEVICE=default
       - PULSE_SERVER=unix:/run/user/1000/pulse/native
     volumes:
-      - ./wyoming-satellite/sounds:/sounds:ro
+      - ./linux-voice-assistant/wakewords/bmo.json:/app/wakewords/bmo.json
+      - ./linux-voice-assistant/wakewords/bmo.tflite:/app/wakewords/bmo.tflite
       - /run/user/1000/pulse:/run/user/1000/pulse
     devices:
       - /dev/snd:/dev/snd
-    group_add:
-      - audio
-    ports:
-      - 10500:10500
-    depends_on:
-      - wyoming-wakeword
+    network_mode: host
     restart: unless-stopped
+
+  # pihole:
+  #   image: pihole/pihole:latest
+  #   ports:
+  #     - "53:53/tcp"
+  #     - "53:53/udp"
+  #     - "8080:80/tcp"
+  #   environment:
+  #     TZ: 'America/Sao_Paulo'
+  #     FTLCONF_webserver_api_password: '123'
+  #     FTLCONF_dns_listeningMode: 'ALL'
+  #   volumes:
+  #     - './etc-pihole:/etc/pihole'
+  #   restart: unless-stopped
