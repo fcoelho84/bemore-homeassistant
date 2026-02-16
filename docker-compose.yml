@@ -23,6 +23,7 @@ services:
     command: --voice en_US-bmo_voice --data-dir /data --length-scale 0.85 --noise-scale 0.3 --noise-w-scale 0.3
     volumes:
       - ./wyoming-piper/data:/data
+      - ./wyoming-piper/data/voices.json:/usr/src/wyoming_piper/voices.json:ro
     ports:
       - 10200:10200
     restart: unless-stopped
@@ -43,6 +44,14 @@ services:
     devices:
       - /dev/snd:/dev/snd
     network_mode: host
+    restart: unless-stopped
+
+  bmo-face:
+    build: ./bmo-face
+    environment:
+      - HA_TOKEN=${HA_TOKEN}
+    ports:
+      - 8888:80
     restart: unless-stopped
 
   # pihole:

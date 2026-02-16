@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMO Face</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .bmo-face {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .bmo-face img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+    </style>
+</head>
+<body>
+    <div class="bmo-face">
+        <img id="bmoImage" src="images/Rosto-01.jpg" alt="BMO">
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+        const HA_URL = BMO_CONFIG.HA_WEBSOCKET_URL;
+        const HA_TOKEN = BMO_CONFIG.HA_TOKEN;
+        const ASSIST_ENTITY = BMO_CONFIG.ASSIST_ENTITY || 'assist_satellite.lva_d4d853ab286d_ab286d_assist_satellite';
+
+        // Imagens aleatórias para quando não há eventos (standby/idle)
+        const RANDOM_IMAGES = [
+            'images/Rosto-01.jpg', 'images/Rosto-05.jpg', 'images/Rosto-14.jpg',
+            'images/Rosto-18.jpg', 'images/Rosto-26.jpg', 'images/Rosto-28.jpg'
+        ];
+
+        // Animações para cada estado ativo
+        const ANIMATIONS = {
+            idle: {
+                frames: ['images/Rosto-01.jpg', 'images/Rosto-01.jpg', 'images/Rosto-01.jpg', 'images/Rosto-04.jpg'],
+                interval: 500
+            },
+            listening: {
+                frames: ['images/Rosto-18.jpg', 'images/Rosto-05.jpg'],
+                interval: 800
+            },
+            processing: {
+                frames: ['images/Rosto-24.jpg'],
+                interval: 500
+            },
+            speaking: {
+                frames: ['images/Rosto-01.jpg', 'images/Rosto-02.jpg', 'images/Rosto-04.jpg', 'images/Rosto-02.jpg'],
+                interval: 350
+            },
+            error: {
+                frames: ['images/Rosto-25.jpg'],
+                interval: 1000
+            }
+        };
+
+        // Mapeia estados do assist_satellite para estados do BMO
+        const STATE_MAP = {
+            'idle': 'standby',
+            'listening': 'listening',
+            'processing': 'processing',
+            'responding': 'speaking'
+        };
+
+        let ws = null;
+        let messageId = 1;
+        let currentState = 'standby';
+        let animationInterval = null;
+        let frameIndex = 0;
+        const bmoImage = document.getElementById('bmoImage');
+
+        function showRandomImage() {
+            if (animationInterval) {
+                clearInterval(animationInterval);
+                animationInterval = null;
+            }
+            const randomIndex = Math.floor(Math.random() * RANDOM_IMAGES.length);
+            bmoImage.src = RANDOM_IMAGES[randomIndex];
+        }
+
+        function startAnimation(state) {
+            if (animationInterval) {
+                clearInterval(animationInterval);
+            }
+
+            const anim = ANIMATIONS[state] || ANIMATIONS.idle;
+            frameIndex = 0;
+
+            bmoImage.src = anim.frames[0];
+
+            if (anim.frames.length > 1) {
+                animationInterval = setInterval(() => {
+                    frameIndex = (frameIndex + 1) % anim.frames.length;
+                    bmoImage.src = anim.frames[frameIndex];
+                }, anim.interval);
+            }
+        }
+
+        function setState(state) {
+            if (currentState === state) return;
+            currentState = state;
+            
+            if (state === 'standby') {
+                showRandomImage();
+            } else {
+                startAnimation(state);
+            }
+            
+            if (BMO_CONFIG.DEBUG) console.log(`BMO: ${state}`);
+        }
+
+        function connect() {
+            if (!HA_TOKEN) {
+                demoMode();
+                return;
+            }
+
+            ws = new WebSocket(HA_URL);
+
+            ws.onopen = () => {
+                if (BMO_CONFIG.DEBUG) console.log('WebSocket conectado');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+            };
+
+            ws.onerror = (err) => {
+                console.error('Erro WebSocket:', err);
+            };
+
+            ws.onclose = () => {
+                console.log('Desconectado, reconectando em 5s...');
+                setTimeout(connect, 5000);
+            };
+        }
+
+        function handleMessage(data) {
+            if (data.type === 'auth_required') {
+                ws.send(JSON.stringify({ type: 'auth', access_token: HA_TOKEN }));
+            } else if (data.type === 'auth_ok') {
+                if (BMO_CONFIG.DEBUG) console.log('Autenticado no HA');
+                subscribeToStateChanges();
+                getInitialState();
+            } else if (data.type === 'auth_invalid') {
+                console.error('Token inválido!');
+            } else if (data.type === 'result' && data.id === 2 && data.success) {
+                // Resposta do get_states - procura a entidade do assist
+                const entity = data.result.find(e => e.entity_id === ASSIST_ENTITY);
+                if (entity) {
+                    const haState = entity.state;
+                    const bmoState = STATE_MAP[haState] || 'standby';
+                    if (BMO_CONFIG.DEBUG) console.log(`Estado inicial: ${haState} -> ${bmoState}`);
+                    setState(bmoState);
+                } else {
+                    console.warn(`Entidade ${ASSIST_ENTITY} não encontrada`);
+                }
+            } else if (data.type === 'event' && data.event.event_type === 'state_changed') {
+                handleStateChange(data.event);
+            }
+        }
+
+        function subscribeToStateChanges() {
+            ws.send(JSON.stringify({
+                id: messageId++,
+                type: 'subscribe_events',
+                event_type: 'state_changed'
+            }));
+            if (BMO_CONFIG.DEBUG) console.log('Inscrito em state_changed');
+        }
+
+        function getInitialState() {
+            ws.send(JSON.stringify({
+                id: 2,
+                type: 'get_states'
+            }));
+        }
+
+        function handleStateChange(event) {
+            const data = event.data;
+            
+            // Filtra apenas a entidade do assist_satellite
+            if (data.entity_id !== ASSIST_ENTITY) return;
+            
+            const newState = data.new_state?.state;
+            const oldState = data.old_state?.state;
+            
+            if (BMO_CONFIG.DEBUG) console.log(`Assist: ${oldState} -> ${newState}`);
+            
+            // Mapeia estado do HA para estado do BMO
+            const bmoState = STATE_MAP[newState] || 'standby';
+            setState(bmoState);
+        }
+
+        function demoMode() {
+            const states = ['standby', 'listening', 'processing', 'speaking'];
+            let i = 0;
+            
+            document.body.addEventListener('click', () => {
+                i = (i + 1) % states.length;
+                setState(states[i]);
+            });
+            
+            setInterval(() => {
+                i = (i + 1) % states.length;
+                setState(states[i]);
+            }, 4000);
+        }
+
+        // Pré-carregar imagens
+        Object.values(ANIMATIONS).forEach(anim => {
+            anim.frames.forEach(src => {
+                const img = new Image();
+                img.src = src;
+            });
+        });
+        RANDOM_IMAGES.forEach(src => {
+            const img = new Image();
+            img.src = src;
+        });
+
+        // Iniciar com imagem aleatória parada
+        setState('standby');
+        connect();
+    </script>
+</body>
+</html>
